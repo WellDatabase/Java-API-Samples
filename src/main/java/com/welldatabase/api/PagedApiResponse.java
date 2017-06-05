@@ -2,7 +2,7 @@ package com.welldatabase.api;
 
 import java.util.ArrayList;
 
-public class PagedApiResponse<T> {
+public class PagedApiResponse<T> extends ApiResponse{
     private int total;
     private int page;
     private int pageSize;

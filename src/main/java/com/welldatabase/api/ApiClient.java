@@ -7,13 +7,13 @@ import com.welldatabase.api.model.Well;
 import com.welldatabase.api.request.*;
 import org.apache.http.Header;
 import org.apache.http.HttpHeaders;
+import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
-import org.apache.http.client.ResponseHandler;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.client.BasicResponseHandler;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.message.BasicHeader;
+import org.apache.http.util.EntityUtils;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -33,7 +33,7 @@ public class ApiClient {
     }
 
 
-    public <T, TFilters extends CommonFilters> PagedApiResponse<T> getPaged(TFilters filters, String route, Class<T> type) throws IOException {
+    public <T, TFilters extends CommonFilters> PagedApiResponse<T> getPaged(TFilters filters, String route, Class<T> type) throws IOException, OverRequestLimitException {
 
         if(route == null || route.isEmpty()) {
             throw new InputMismatchException("Route value can not be null or empty");
@@ -49,20 +49,20 @@ public class ApiClient {
 
         return response;
     }
-    public PagedApiResponse<Well> searchWells(WellFilters filters) throws IOException {
+    public PagedApiResponse<Well> searchWells(WellFilters filters) throws IOException, OverRequestLimitException {
         String postUrl = "/wells/search";
         return getPaged(filters, postUrl, Well.class);
     }
-    public PagedApiResponse<Production> searchProduction(ProductionVolumeFilters filters) throws IOException {
+    public PagedApiResponse<Production> searchProduction(ProductionVolumeFilters filters) throws IOException, OverRequestLimitException {
         String postUrl = "/productionVolumes/search";
         return getPaged(filters, postUrl, Production.class);
     }
-    public PagedApiResponse<Casing> searchCasings(CasingFilters filters) throws IOException {
+    public PagedApiResponse<Casing> searchCasings(CasingFilters filters) throws IOException, OverRequestLimitException {
         String postUrl = "/casings/search";
         return getPaged(filters, postUrl, Casing.class);
     }
 
-    private <T> PagedApiResponse<T>  processResponse(HttpClient httpClient, Object data, String route, Class<T> type) throws IOException {
+    private <T> PagedApiResponse<T>  processResponse(HttpClient httpClient, Object data, String route, Class<T> type) throws IOException, OverRequestLimitException {
 
         String dateFormatLiteral = "yyyy-MM-dd'T'HH:mm:ss";
         Gson gson = new GsonBuilder().setDateFormat(dateFormatLiteral).create();
@@ -73,26 +73,95 @@ public class ApiClient {
         HttpPost post = new HttpPost(route);
         post.setEntity(postingString);
 
-        ResponseHandler<String> responseHandler = new BasicResponseHandler();
-        String response = httpClient.execute(post, responseHandler);
+        HttpResponse httpResponse = httpClient.execute(post);
+        String response = EntityUtils.toString(httpResponse.getEntity(), "UTF-8");
 
-        JsonObject myObject = gson.fromJson(response, JsonObject.class);
 
-        int total = myObject.get("total").getAsInt();
-        int page = myObject.get("page").getAsInt();
-        int pageSize = myObject.get("pageSize").getAsInt();
-        JsonArray jsonItems = myObject.get("data").getAsJsonArray();
+        int total = 0;
+        int page = 0;
+        int pageSize = 0;
         ArrayList<T> items = new ArrayList<T>();
 
-        for (int i = 0; i < jsonItems.size(); i++) {
+        int statusCode = httpResponse.getStatusLine().getStatusCode();
+        if(statusCode == 429) {
+            throw new OverRequestLimitException();
+        }
+        if(statusCode >=200 && statusCode < 400 && response != null) {
+            JsonObject myObject = gson.fromJson(response, JsonObject.class);
 
-            JsonElement entry = jsonItems.get(i);
-            T result = gson.fromJson(entry, type);
+            total = myObject.has("total") ? myObject.get("total").getAsInt() : 0;
+            page = myObject.has("page") ? myObject.get("page").getAsInt() : 0;
+            pageSize = myObject.has("pageSize") ? myObject.get("pageSize").getAsInt() : 0;
+            JsonArray jsonItems = myObject.get("data").getAsJsonArray();
 
-            items.add(result);
+
+            for (int i = 0; i < jsonItems.size(); i++) {
+
+                JsonElement entry = jsonItems.get(i);
+                T result = gson.fromJson(entry, type);
+
+                items.add(result);
+            }
         }
 
-        return new PagedApiResponse<T>(total, page, pageSize, items);
+        PagedApiResponse<T> objectResponse = new PagedApiResponse<T>(total, page, pageSize, items);
+
+        SetRequestLimits(httpResponse, objectResponse);
+
+        return objectResponse;
+    }
+
+    private <T> void SetRequestLimits(HttpResponse httpResponse, PagedApiResponse<T> objectResponse) {
+        Header rateLimitRemainingHeader = httpResponse.getFirstHeader("RateLimit-Remaining");
+        Header rateLimitUsedHeader = httpResponse.getFirstHeader("RateLimit-Used");
+        Header rateLimitHeader = httpResponse.getFirstHeader("RateLimit-Limit");
+        Header rateLimitNextResetHeader = httpResponse.getFirstHeader("RateLimit-Reset");
+
+        if(rateLimitHeader != null) {
+            String rateLimitValue = rateLimitHeader.getValue();
+
+            if (rateLimitValue != null) {
+                Integer rateLimitParsed = Integer.parseInt(rateLimitValue);
+
+                if (rateLimitParsed != null) {
+                    objectResponse.setRateLimit(rateLimitParsed);
+                }
+            }
+        }
+        if(rateLimitRemainingHeader != null) {
+            String rateLimitRemainingValue = rateLimitRemainingHeader.getValue();
+
+
+            if (rateLimitRemainingValue != null) {
+                Integer rateLimitLeft = Integer.parseInt(rateLimitRemainingValue);
+
+                if (rateLimitLeft != null) {
+                    objectResponse.setRateLimitLeft(rateLimitLeft);
+                }
+            }
+        }
+        if(rateLimitUsedHeader != null){
+            String rateLimitUsedValue = rateLimitUsedHeader.getValue();
+
+            if (rateLimitUsedValue != null) {
+                Integer rateLimitUsed = Integer.parseInt(rateLimitUsedValue);
+
+                if (rateLimitUsed != null) {
+                    objectResponse.setRateLimitUsed(rateLimitUsed);
+                }
+            }
+        }
+        if(rateLimitNextResetHeader != null) {
+            String rateLimitNextResetValue = rateLimitNextResetHeader.getValue();
+
+            if (rateLimitNextResetValue != null) {
+                Long rateLimitNextREstUnixTimestamp = Long.parseLong(rateLimitNextResetValue);
+
+                if (rateLimitNextREstUnixTimestamp != null) {
+                    objectResponse.setRateLimitReset(new java.util.Date((long) rateLimitNextREstUnixTimestamp * 1000));
+                }
+            }
+        }
     }
 
     private HttpClient createHttpClient() {

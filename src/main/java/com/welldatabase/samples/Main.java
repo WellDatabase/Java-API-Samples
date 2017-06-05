@@ -2,6 +2,7 @@ package com.welldatabase.samples;
 
 import com.google.gson.*;
 import com.welldatabase.api.ApiClient;
+import com.welldatabase.api.OverRequestLimitException;
 import com.welldatabase.api.PagedApiResponse;
 import com.welldatabase.api.model.Casing;
 import com.welldatabase.api.model.Well;
@@ -10,13 +11,13 @@ import com.welldatabase.api.request.Request;
 import com.welldatabase.api.request.WellFilters;
 import org.apache.http.Header;
 import org.apache.http.HttpHeaders;
+import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
-import org.apache.http.client.ResponseHandler;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.client.BasicResponseHandler;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.message.BasicHeader;
+import org.apache.http.util.EntityUtils;
 
 import java.io.IOException;
 import java.text.ParseException;
@@ -37,15 +38,18 @@ public class Main {
 
     private static void ManualExample() throws IOException {
 
-        CasingFilters filters = new CasingFilters();
-        String postUrl = "https://app.welldatabase.com/api/v2/casings/search";
+        for (int i = 0; i < 13; i++) {
+            CasingFilters filters = new CasingFilters();
 
-        //Create http client
-        HttpClient httpClient = createHttpClient();
-        PagedApiResponse<Casing> response = processResponse(httpClient, new Request(filters), postUrl, Casing.class);
+            String postUrl = "https://app.welldatabase.com/api/v2/casings/search";
 
-        for(Casing item :  response.getItems()) {
-            System.out.println(item.getDateLastModified());
+            //Create http client
+            HttpClient httpClient = createHttpClient();
+            PagedApiResponse<Casing> response = processResponse(httpClient, new Request(filters), postUrl, Casing.class);
+
+            for (Casing item : response.getItems()) {
+                System.out.println(item.getDateLastModified());
+            }
         }
     }
 
@@ -71,10 +75,15 @@ public class Main {
         HttpPost post = new HttpPost(route);
         post.setEntity(postingString);
 
-        ResponseHandler<String> responseHandler = new BasicResponseHandler();
-        String response = httpClient.execute(post, responseHandler);
+        HttpResponse httpResponse = httpClient.execute(post);
+        String response = EntityUtils.toString(httpResponse.getEntity(), "UTF-8");
 
         JsonObject myObject = gson.fromJson(response, JsonObject.class);
+
+        Header rateLimitRemaining = httpResponse.getFirstHeader("RateLimit-Remaining");
+        Header rateLimitUsed = httpResponse.getFirstHeader("RateLimit-Used");
+        Header rateLimit = httpResponse.getFirstHeader("RateLimit-Limit");
+        Header rateLimitNextReset = httpResponse.getFirstHeader("RateLimit-Reset");
 
         int total = myObject.get("total").getAsInt();
         int page = myObject.get("page").getAsInt();
@@ -95,7 +104,7 @@ public class Main {
 
 
 
-    private static void ApiClientExample() throws IOException {
+    private static void ApiClientExample() throws IOException, OverRequestLimitException {
 
         WellFilters filters = new WellFilters();
 
