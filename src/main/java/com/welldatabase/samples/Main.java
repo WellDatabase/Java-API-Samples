@@ -7,9 +7,11 @@ import com.welldatabase.api.PagedApiResponse;
 import com.welldatabase.api.model.Casing;
 import com.welldatabase.api.model.Well;
 import com.welldatabase.api.request.CasingFilters;
-import com.welldatabase.api.request.Request;
+import com.welldatabase.api.request.ExportRequest;
+import com.welldatabase.api.request.SearchRequest;
 import com.welldatabase.api.request.WellFilters;
 import org.apache.http.Header;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
@@ -19,38 +21,59 @@ import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.message.BasicHeader;
 import org.apache.http.util.EntityUtils;
 
-import java.io.IOException;
+import java.io.*;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
+import static com.welldatabase.samples.utils.viewFirstZipFile;
+
 public class Main {
 
     private static String API_KEY = "PLEASE ENTER YOUR API KEY";
 
-    public static void main(String[] args) throws IOException, ParseException {
+    public static void main(String[] args) throws IOException, ParseException, OverRequestLimitException {
 
-        //ApiClientExample();
+        //ApiClientSearchExample();
+        //ApiClientExportExample();
 
-        ManualExample();
+        //ManualSearchExample();
+        ManualExportExample();
     }
 
-    private static void ManualExample() throws IOException {
+    private static void ManualSearchExample() throws IOException {
 
-            CasingFilters filters = new CasingFilters();
+        CasingFilters filters = new CasingFilters();
+        filters.DateLastModified.Min = utils.addDays(new Date(), -3);
 
-            String postUrl = "https://app.welldatabase.com/api/v2/casings/search";
+        String postUrl = "https://app.welldatabase.com/api/v2/casings/search";
 
-            //Create http client
-            HttpClient httpClient = createHttpClient();
-            PagedApiResponse<Casing> response = processResponse(httpClient, new Request(filters), postUrl, Casing.class);
+        //Create http client
+        HttpClient httpClient = createHttpClient();
+        PagedApiResponse<Casing> response = processPagedResponse(httpClient, new SearchRequest(filters), postUrl, Casing.class);
 
-            for (Casing item : response.getItems()) {
-                System.out.println(item.getDateLastModified());
-            }
-        
+        for (Casing item : response.getItems()) {
+            System.out.println(item.getDateLastModified());
+        }
+
     }
+
+    private static void ManualExportExample() throws IOException {
+
+        CasingFilters filters = new CasingFilters();
+        filters.DateLastModified.Min = utils.addDays(new Date(), -3);
+
+        String postUrl = "https://app.welldatabase.com/api/v2/casings/export";
+
+        //Create http client
+        HttpClient httpClient = createHttpClient();
+                File fileTarget = new File("test.zip");
+        processStreamResponse(httpClient, new ExportRequest(filters), postUrl, fileTarget);
+
+        viewFirstZipFile(fileTarget);
+    }
+
 
     private static HttpClient createHttpClient() {
         Header contentType = new BasicHeader(HttpHeaders.CONTENT_TYPE, "application/json");
@@ -63,19 +86,13 @@ public class Main {
         return HttpClientBuilder.create().setDefaultHeaders(headers).build();
     }
 
-    private static <T> PagedApiResponse<T>  processResponse(HttpClient httpClient, Object data, String route, Class<T> type) throws IOException {
+    private static <T> PagedApiResponse<T> processPagedResponse(HttpClient httpClient, Object data, String route, Class<T> type) throws IOException {
 
-        String dateFormatLiteral = "yyyy-MM-dd'T'HH:mm:ss";
-        Gson gson = new GsonBuilder().setDateFormat(dateFormatLiteral).create();
+        Gson gson = getGson();
 
-        String content = gson.toJson(data);//gson.tojson() converts your pojo to json
-        StringEntity postingString = new StringEntity(content);
-
-        HttpPost post = new HttpPost(route);
-        post.setEntity(postingString);
-
-        HttpResponse httpResponse = httpClient.execute(post);
-        String response = EntityUtils.toString(httpResponse.getEntity(), "UTF-8");
+        HttpResponse httpResponse = sendRequest(httpClient, data, route, gson);
+        HttpEntity entity = httpResponse.getEntity();
+        String response = EntityUtils.toString(entity, "UTF-8");
 
         JsonObject myObject = gson.fromJson(response, JsonObject.class);
 
@@ -101,21 +118,64 @@ public class Main {
         return new PagedApiResponse<T>(total, page, pageSize, items);
     }
 
+    private static HttpResponse sendRequest(HttpClient httpClient, Object data, String route, Gson gson) throws IOException {
+        String content = gson.toJson(data);//gson.tojson() converts your pojo to json
+        StringEntity postingString = new StringEntity(content);
+
+        HttpPost post = new HttpPost(route);
+        post.setEntity(postingString);
+
+        return httpClient.execute(post);
+    }
+
+    private static Gson getGson() {
+        String dateFormatLiteral = "yyyy-MM-dd'T'HH:mm:ss";
+        return new GsonBuilder().setDateFormat(dateFormatLiteral).create();
+    }
+
+    private static void processStreamResponse(HttpClient httpClient, Object data, String route, File fileTarget) throws IOException {
+        Gson gson = getGson();
+
+        HttpResponse httpResponse = sendRequest(httpClient, data, route, gson);
+
+        HttpEntity entity = httpResponse.getEntity();
+
+        BufferedInputStream bis = new BufferedInputStream(entity.getContent());
+
+        BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(fileTarget));
+        int inByte;
+        while((inByte = bis.read()) != -1) bos.write(inByte);
+        bis.close();
+        bos.close();
+    }
 
 
-    private static void ApiClientExample() throws IOException, OverRequestLimitException {
+    private static void ApiClientSearchExample() throws IOException, OverRequestLimitException {
 
         WellFilters filters = new WellFilters();
 
         filters.DateLastModified.Min = utils.addDays(new Date(), -3);
 
         ApiClient client = new ApiClient("Wdb Sample", API_KEY);
-        PagedApiResponse<Well> clientResponse = client.searchWells(filters);
+        PagedApiResponse<Well> clientResponse = client.getWells().search(filters);
 
         for(Well item :  clientResponse.getItems()) {
             System.out.println(item.getDateLastModified());
         }
 
+    }
+
+    private static void ApiClientExportExample() throws IOException, OverRequestLimitException {
+
+        WellFilters filters = new WellFilters();
+
+        filters.DateLastModified.Min = utils.addDays(new Date(), -3);
+
+        ApiClient client = new ApiClient("Wdb Sample", API_KEY);
+        File target = new File("test.zip");
+        client.getWells().export(filters, target);
+
+        utils.viewFirstZipFile(target);
     }
 
 }
