@@ -38,7 +38,6 @@ public class Main {
 
     private static void ManualExample() throws IOException {
 
-        for (int i = 0; i < 13; i++) {
             CasingFilters filters = new CasingFilters();
 
             String postUrl = "https://app.welldatabase.com/api/v2/casings/search";
@@ -50,7 +49,7 @@ public class Main {
             for (Casing item : response.getItems()) {
                 System.out.println(item.getDateLastModified());
             }
-        }
+        
     }
 
     private static HttpClient createHttpClient() {
